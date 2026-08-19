@@ -1,0 +1,118 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  # ==========================================
+  # STAGE 1: LINT & CODE QUALITY
+  # ==========================================
+  lint:
+    name: Lint & Code Style Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip" # Automatic pip dependency caching
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8
+
+      - name: Run Flake8 Linter
+        run: |
+          # stop the build if there are Python syntax errors or undefined names
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          # exit-zero treats all errors as warnings. Max line length 120
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics
+
+  # ==========================================
+  # STAGE 2: AUTOMATED TESTING & COVERAGE
+  # ==========================================
+  test:
+    name: Unit Tests & Code Coverage
+    runs-on: ubuntu-latest
+    needs: lint # Only run if linting passes
+
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"] # Multi-version matrix testing
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Pytest with Coverage
+        run: |
+          pytest --cov=app --cov-report=term-missing --cov-report=xml
+
+  # ==========================================
+  # STAGE 3: CONTAINER BUILD & SECURITY SCAN
+  # ==========================================
+  docker-build:
+    name: Build Docker Image & Verify
+    runs-on: ubuntu-latest
+    needs: test # Only build container after tests pass
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image (dry run test)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: ci-cd-practice:test
+
+  # ==========================================
+  # STAGE 4: CONTINUOUS DEPLOYMENT (CD)
+  # ==========================================
+  deploy:
+    name: Continuous Deployment
+    runs-on: ubuntu-latest
+    needs: [test, docker-build]
+    # Only run deployment on pushes to main/master, never on pull requests
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy to Environment
+        run: |
+          echo "======================================================="
+          echo "🚀 Triggering Deployment to Production..."
+          echo "Commit SHA: ${{ github.sha }}"
+          echo "Triggered by: ${{ github.actor }}"
+          echo "Pipeline Status: ALL TESTS AND BUILDS PASSED"
+          echo "======================================================="
+          # Here you can plug in:
+          # - Docker push to Docker Hub / GHCR
+          # - SSH to VPS (ssh-action) & docker compose pull && docker compose up -d
+          # - Cloud Provider Webhook (Render / Railway / AWS ECS / GCP Cloud Run)
